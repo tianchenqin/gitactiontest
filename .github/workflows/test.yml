@@ -1,0 +1,89 @@
+name: Terragrunt ECS CI/CD
+
+on:
+  push:
+    branches: [main, dev1]
+  pull_request:
+    branches: [main, dev1]
+
+jobs:
+  terraform-deploy:
+    runs-on: standard-ghc
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. 安装工具（保持不变）
+      - name: Install Terraform
+        run: |
+          TERRAFORM_VERSION="1.6.0"
+          wget https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+          unzip terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+          sudo mv terraform /usr/local/bin/
+          terraform --version
+
+      - name: Install Terragrunt
+        run: |
+          TERRAGRUNT_VERSION="0.55.0"
+          wget https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Debug TF_VAR variables
+        run: |
+          echo "access_key len: ${#TF_VAR_alicloud_access_key}"
+          echo "secret_key len: ${#TF_VAR_alicloud_secret_key}"
+        env:
+          TF_VAR_alicloud_access_key: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+          TF_VAR_alicloud_secret_key: ${{ secrets.ALICLOUD_SECRET_KEY }}
+      # 2. 关键：验证环境变量是否注入，且能被子进程读取
+      - name: Verify Environment Variables (Critical)
+        run: |
+          echo "=== 1. 顶层环境变量验证 ==="
+          echo "ALICLOUD_ACCESS_KEY length: ${#ALICLOUD_ACCESS_KEY}"  # 必须非0（如20）
+          echo "ALICLOUD_SECRET_KEY length: ${#ALICLOUD_SECRET_KEY}"  # 必须非0（如30）
+          echo "ALICLOUD_REGION: $ALICLOUD_REGION"  # 必须是 cn-hangzhou
+          
+          echo "=== 2. 子进程环境变量验证 ==="
+          # 模拟 Terragrunt 子进程，确认环境变量可继承
+          bash -c 'echo "Subprocess ALICLOUD_ACCESS_KEY length: ${#ALICLOUD_ACCESS_KEY}"'
+          bash -c 'echo "Subprocess ALICLOUD_REGION: $ALICLOUD_REGION"'
+          
+          echo "=== 3. 工作目录准备 ==="
+          cd terragrunt/dev/network_account
+          ls -la  # 确认 provider.tf 已被生成（或即将被生成）
+        env:
+          ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+          ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
+          ALICLOUD_REGION: "cn-hangzhou"
+
+      # 3. 执行 Terragrunt：仅注入环境变量，无其他参数
+      - name: Terragrunt Init
+        working-directory: terragrunt/dev/network_account
+        run: terragrunt init
+        env:
+          TF_LOG: DEBUG  # 输出详细日志，查看环境变量读取情况
+          TF_VAR_alicloud_access_key: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+          TF_VAR_alicloud_secret_key: ${{ secrets.ALICLOUD_SECRET_KEY }}
+          TF_VAR_region: "cn-hangzhou"
+
+      - name: Terragrunt Plan
+        working-directory: terragrunt/dev/network_account
+        run: terragrunt plan -out=tfplan
+        env:
+          TF_CLI_ARGS: "-no-color"
+          TF_LOG: DEBUG  # 调试日志，确认凭据传递
+          TF_VAR_alicloud_access_key: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+          TF_VAR_alicloud_secret_key: ${{ secrets.ALICLOUD_SECRET_KEY }}
+          TF_VAR_region: "cn-hangzhou"
+
+      - name: Terragrunt Apply (on push to dev)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        working-directory: terragrunt/dev/network_account
+        run: terragrunt apply -auto-approve tfplan
+        env:
+          TF_CLI_ARGS: "-no-color"
+          TF_VAR_alicloud_access_key: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+          TF_VAR_alicloud_secret_key: ${{ secrets.ALICLOUD_SECRET_KEY }}
+          TF_VAR_region: "cn-hangzhou"
