@@ -18,7 +18,7 @@ on:
 jobs:
   terraform-plan:
     name: 'Terraform Plan'
-    runs-on: standard-ghc
+    runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }} # 使用手动输入或默认环境
 
     steps:
