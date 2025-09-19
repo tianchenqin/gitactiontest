@@ -105,7 +105,7 @@ jobs:
         working-directory: terragrunt/dev/network_account
         run: |
           # 运行plan并确保输出文件
-          terragrunt plan -input=false -out=tfplan
+          terragrunt plan -input=false -out=tfplan -lock=false
           # 验证文件是否生成
           find $(pwd) -name tfplan
           ls -al
